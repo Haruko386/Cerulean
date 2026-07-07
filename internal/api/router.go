@@ -41,14 +41,21 @@ func NewRouter(opts RouterOptions) http.Handler {
 		v1.GET("/settings/deepseek", h.GetDeepSeekSettings)
 		v1.PUT("/settings/deepseek", h.UpdateDeepSeekSettings)
 
-		v1.POST("/papers", h.UploadPaper)
-		v1.GET("/papers", h.ListPapers)
-		v1.GET("/papers/:id", h.GetPaper)
-		v1.GET("/papers/:id/download", h.DownloadPaper)
-		v1.GET("/papers/:id/chunks", h.ListPaperChunks)
-		v1.POST("/papers/:id/ingest", h.StartPaperIngest)
+		papers := v1.Group("/papers")
+		{
+			papers.POST("", h.UploadPaper)
+			papers.GET("", h.ListPapers)
+			papers.GET("/:id", h.GetPaper)
+			papers.GET("/:id/download", h.DownloadPaper)
+			papers.GET("/:id/chunks", h.ListPaperChunks)
+			papers.POST("/:id/ingest", h.StartPaperIngest)
+			papers.POST("/:id/reindex")
+		}
 
-		v1.GET("/tasks/:id", h.GetTask)
+		tasks := v1.Group("/tasks")
+		{
+			tasks.GET("/:id", h.GetTask)
+		}
 
 		v1.POST("/search", h.Search)
 		//v1.POST("/chat", h.Chat)
