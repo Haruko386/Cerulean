@@ -35,6 +35,18 @@ type Config struct {
 
 	LLMBaseURL string
 	LLMModel   string
+
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+
+	QueueDriver   string
+	QueueStream   string
+	QueueGroup    string
+	QueueConsumer string
+
+	WorkerConcurrency int
+	WorkerBatchSize   int
 }
 
 func Load() Config {
