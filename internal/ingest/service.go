@@ -140,22 +140,15 @@ func (s *Service) runPDFTextIngest(ctx context.Context, job task.Task, paper dom
 		return fmt.Errorf("pdf text parser produced no chunks")
 	}
 
-	// delete old chunks in mysql
-	if err := s.chunks.DeleteByPaperID(ctx, paper.ID); err != nil {
-		return fmt.Errorf("delete old chunks from mysql: %w", err)
+	if err := s.chunks.ReplaceByPaperID(ctx, paper.ID, chunks); err != nil {
+		return fmt.Errorf("replace chunks in mysql: %w", err)
 	}
-	// delete old chunk index in es
+
 	if s.search != nil {
 		if err := s.search.DeleteByPaperID(ctx, paper.ID); err != nil {
 			return fmt.Errorf("delete old chunks from elasticsearch: %w", err)
 		}
-	}
-	// save new chunks in mysql
-	if err := s.chunks.UpsertMany(ctx, chunks); err != nil {
-		return fmt.Errorf("save chunks to mysql: %w", err)
-	}
-	// save new chunks index in es
-	if s.search != nil {
+
 		if err := s.search.IndexChunks(ctx, chunks); err != nil {
 			return fmt.Errorf("index chunks to elasticsearch: %w", err)
 		}
