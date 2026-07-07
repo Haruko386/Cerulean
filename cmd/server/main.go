@@ -64,17 +64,6 @@ func buildRepositories(cfg config.Config) (repository.PaperRepository, repositor
 			return nil, nil, nil, err
 		}
 		return database.Papers, database.Chunks, database.Users, nil
-
-	case "json":
-		repo, err := repository.NewJSONRepository(cfg.DBPath)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		return repo, repository.NewJSONChunkRepository(repo), nil, nil
-
-	case "memory":
-		return repository.NewMemoryPaperRepository(), repository.NewMemoryChunkRepository(), nil, nil
-
 	default:
 		return nil, nil, nil, fmt.Errorf("unsupported CERULEAN_DB_DRIVER=%q; supported: mysql, json, memory", cfg.DBDriver)
 	}

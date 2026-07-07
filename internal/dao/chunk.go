@@ -3,6 +3,7 @@ package dao
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/CeruleanFlow/cerulean/internal/domain"
 	"github.com/CeruleanFlow/cerulean/internal/entity"
@@ -134,4 +135,57 @@ func fromJSONMap(values datatypes.JSONMap) map[string]string {
 	}
 
 	return out
+}
+
+func (d *ChunkDAO) ReplaceByPaperID(ctx context.Context, paperID string, chunks []domain.Chunk) error {
+	if strings.TrimSpace(paperID) == "" {
+		return fmt.Errorf("invalid paper id")
+	}
+
+	return d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("paper_id = ?", paperID).Delete(&entity.Chunk{}).Error; err != nil {
+			return fmt.Errorf("delete old chunks: %w", err)
+		}
+		if len(chunks) == 0 {
+			return nil
+		}
+
+		entities := make([]entity.Chunk, 0, len(chunks))
+
+		for _, chunk := range chunks {
+			if chunk.PaperID != paperID {
+				return fmt.Errorf("invalid paper id")
+			}
+			if chunk.PaperID == "" {
+				chunk.PaperID = paperID
+			}
+
+			entities = append(entities, domainChunkToEntity(chunk))
+		}
+
+		if err := tx.Create(&entities).Error; err != nil {
+			return fmt.Errorf("insert new chunks: %w", err)
+		}
+		return nil
+	})
+}
+
+func domainChunkToEntity(chunk domain.Chunk) entity.Chunk {
+	metadata := map[string]any{}
+	for k, v := range chunk.Metadata {
+		metadata[k] = v
+	}
+
+	return entity.Chunk{
+		ID:         chunk.ID,
+		PaperID:    chunk.PaperID,
+		PageNo:     chunk.PageNo,
+		ChunkIndex: chunk.Index,
+		Text:       chunk.Text,
+		ObjectKey:  chunk.ObjectKey,
+		VectorID:   chunk.VectorID,
+		Metadata:   metadata,
+		CreatedAt:  chunk.CreatedAt,
+		UpdatedAt:  chunk.UpdatedAt,
+	}
 }
