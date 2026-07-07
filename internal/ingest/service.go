@@ -250,3 +250,35 @@ func parsedMarkdown(paper domain.Paper, doc docparser.Document) string {
 
 	return b.String()
 }
+
+func (s *Service) ReindexPaper(ctx context.Context, paperID string) error {
+	if s.search == nil {
+		return fmt.Errorf("search backend is not initialized")
+	}
+
+	paperID = strings.TrimSpace(paperID)
+	if paperID == "" {
+		return fmt.Errorf("paperID cannot be empty")
+	}
+
+	// get chunks
+	chunks, err := s.chunks.ListByPaperID(ctx, paperID)
+	if err != nil {
+		return fmt.Errorf("get chunks by paperID: %w", err)
+	}
+
+	if len(chunks) == 0 {
+		return fmt.Errorf("paper %s has no chunks", paperID)
+	}
+
+	// delete first, update next
+	if err := s.search.DeleteByPaperID(ctx, paperID); err != nil {
+		return fmt.Errorf("delete chunks by paperID: %w", err)
+	}
+
+	if err := s.search.IndexChunks(ctx, chunks); err != nil {
+		return fmt.Errorf("replace chunks by paperID: %w", err)
+	}
+
+	return nil
+}

@@ -49,7 +49,7 @@ func NewRouter(opts RouterOptions) http.Handler {
 			papers.GET("/:id/download", h.DownloadPaper)
 			papers.GET("/:id/chunks", h.ListPaperChunks)
 			papers.POST("/:id/ingest", h.StartPaperIngest)
-			papers.POST("/:id/reindex")
+			papers.POST("/:id/reindex", h.)
 		}
 
 		tasks := v1.Group("/tasks")

@@ -260,6 +260,26 @@ func (h *Handler) StartPaperIngest(c *gin.Context) {
 	c.JSON(http.StatusAccepted, job)
 }
 
+func (h *Handler) ReindexPaper(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		writeError(c, http.StatusBadRequest, errors.New("id is required"))
+		return
+	}
+
+	optCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	if err := h.ingest.ReindexPaper(optCtx, id); err != nil {
+		writeError(c, http.StatusInternalServerError, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"paper_id": id,
+		"status":   "reindexed",
+	})
+}
+
 func (h *Handler) GetTask(c *gin.Context) {
 	id := c.Param("id")
 
