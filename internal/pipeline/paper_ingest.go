@@ -33,5 +33,5 @@ func (h *PaperIngestHandler) Handle(ctx context.Context, job queue.Job) error {
 		return fmt.Errorf("paper id is empty")
 	}
 
-	return h.ingest.ProcessPaperReindex(ctx, taskID, paperID)
+	return h.ingest.ProcessPaperIngest(ctx, taskID, paperID)
 }

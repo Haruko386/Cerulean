@@ -21,17 +21,17 @@ func NewPaperReindexHandler(ingest *ingest.Service) *PaperReindexHandler {
 
 func (h *PaperReindexHandler) Handle(ctx context.Context, job queue.Job) error {
 	if h.ingest == nil {
-		return fmt.Errorf("paper id is empty")
+		return fmt.Errorf("ingest service is nil")
 	}
 
 	taskID := strings.TrimSpace(job.TaskID)
 	paperID := strings.TrimSpace(job.PaperID)
 	if taskID == "" {
-		return fmt.Errorf("paper id is empty")
+		return fmt.Errorf("task id is empty")
 	}
 	if paperID == "" {
 		return fmt.Errorf("paper id is empty")
 	}
 
-	return h.ingest.ProcessPaperReindex(ctx, taskID, paperID)
+	return h.ingest.ProcessPaperReindex(ctx, paperID, taskID)
 }

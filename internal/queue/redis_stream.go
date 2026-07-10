@@ -102,11 +102,11 @@ func (q *RedisStreamQueue) Enqueue(ctx context.Context, job Job) error {
 }
 
 func (q *RedisStreamQueue) DequeueBatch(ctx context.Context, max int, blockMillis int64) ([]Message, error) {
-	if max < 0 {
+	if max <= 0 {
 		max = 16
 	}
 
-	if blockMillis < 0 {
+	if blockMillis <= 0 {
 		blockMillis = 5000
 	}
 

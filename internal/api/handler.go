@@ -267,7 +267,7 @@ func (h *Handler) ReindexPaper(c *gin.Context) {
 		return
 	}
 
-	job, err := h.ingest.StartPaperIngest(c.Request.Context(), id)
+	job, err := h.ingest.StartPaperReindex(c.Request.Context(), id)
 	if err != nil {
 		writeError(c, http.StatusInternalServerError, err)
 		return
