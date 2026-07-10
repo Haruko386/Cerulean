@@ -6,6 +6,8 @@ import (
 	"log"
 	"time"
 
+	celestial "github.com/Haruko386/Celestial"
+
 	"github.com/CeruleanFlow/cerulean/internal/queue"
 )
 
@@ -16,12 +18,21 @@ type Worker struct {
 	batchSize   int
 	blockMillis int64
 	jobTimeout  time.Duration
+	concurrency int
 }
 
 type WorkerOptions struct {
 	BatchSize   int
 	BlockMillis int64
 	JobTimeout  time.Duration
+	Concurrency int
+}
+
+type JobResult struct {
+	RedisID string
+	TaskID  string
+	Type    string
+	PaperID string
 }
 
 func NewWorker(queue queue.Queue, registry *Registry, options WorkerOptions) (*Worker, error) {
@@ -47,12 +58,18 @@ func NewWorker(queue queue.Queue, registry *Registry, options WorkerOptions) (*W
 		jobTimeout = 30 * time.Minute
 	}
 
+	concurrency := options.Concurrency
+	if concurrency == 0 {
+		concurrency = 4
+	}
+
 	return &Worker{
 		queue:       queue,
 		registry:    *registry,
 		batchSize:   batchSize,
 		blockMillis: blockMillis,
 		jobTimeout:  jobTimeout,
+		concurrency: concurrency,
 	}, nil
 }
 
@@ -86,13 +103,76 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 
-		for _, msg := range messages {
-			w.handleMessage(ctx, msg)
+		if err := w.handleBatch(ctx, messages); err != nil {
+			log.Printf("handle batch finished with error: %v", err)
 		}
 	}
 }
 
-func (w *Worker) handleMessage(ctx context.Context, msg queue.Message) {
+func (w *Worker) handleBatch(ctx context.Context, messages []queue.Message) error {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	dispatcher := celestial.New[queue.Message, JobResult](celestial.Config{
+		Workers:     w.concurrency,
+		QueueSize:   w.batchSize,
+		StopOnError: false,
+	})
+
+	run := dispatcher.RunSlice(
+		ctx,
+		messages,
+		func(ctx context.Context, worker celestial.Worker, msg queue.Message) (JobResult, error) {
+			log.Printf(
+				"celestial worker=%d picked job: redis_id=%s task_id=%s type=%s",
+				worker.Index,
+				msg.RedisID,
+				msg.Job.TaskID,
+				msg.Job.Type,
+			)
+
+			return w.handleMessage(ctx, msg)
+		},
+	)
+
+	for result := range run.Results() {
+		if result.Err != nil {
+			log.Printf(
+				"celestial job failed: worker=%d task_index=%d err=%v",
+				result.WorkerIndex,
+				result.TaskID,
+				result.Err,
+			)
+			continue
+		}
+
+		log.Printf(
+			"celestial job done: worker=%d task_index=%d redis_id=%s task_id=%s type=%s paper_id=%s",
+			result.WorkerIndex,
+			result.TaskID,
+			result.Value.RedisID,
+			result.Value.TaskID,
+			result.Value.Type,
+			result.Value.PaperID,
+		)
+	}
+
+	if err := run.Err(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (w *Worker) handleMessage(ctx context.Context, msg queue.Message) (JobResult, error) {
+	result := JobResult{
+		RedisID: msg.RedisID,
+		TaskID:  msg.Job.TaskID,
+		Type:    msg.Job.Type,
+		PaperID: msg.Job.PaperID,
+	}
+
 	log.Printf(
 		"start job: redis_id=%s job_id=%s task_id=%s type=%s paper_id=%s attempt=%d",
 		msg.RedisID,
@@ -116,16 +196,22 @@ func (w *Worker) handleMessage(ctx context.Context, msg queue.Message) {
 			err,
 		)
 
-		if nackErr := w.queue.Nack(context.Background(), msg, err); nackErr != nil {
+		nackCtx, cancel := context.WithTimeout(context.Background(), w.jobTimeout)
+		defer cancel()
+
+		if nackErr := w.queue.Nack(nackCtx, msg, err); nackErr != nil {
 			log.Printf("nack job failed: redis_id=%s task_id=%s err=%v", msg.RedisID, msg.Job.TaskID, nackErr)
 		}
 
-		return
+		return result, err
 	}
 
-	if err := w.queue.Ack(context.Background(), msg); err != nil {
+	ackCtx, cancel := context.WithTimeout(context.Background(), w.jobTimeout)
+	defer cancel()
+
+	if err := w.queue.Ack(ackCtx, msg); err != nil {
 		log.Printf("ack job failed: redis_id=%s task_id=%s err=%v", msg.RedisID, msg.Job.TaskID, err)
-		return
+		return result, err
 	}
 
 	log.Printf(
@@ -134,4 +220,5 @@ func (w *Worker) handleMessage(ctx context.Context, msg queue.Message) {
 		msg.Job.TaskID,
 		msg.Job.Type,
 	)
+	return result, nil
 }

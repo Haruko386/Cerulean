@@ -3,6 +3,7 @@ module github.com/CeruleanFlow/cerulean
 go 1.26.0
 
 require (
+	github.com/Haruko386/Celestial v0.0.0-20260628114458-d82cbffef886
 	github.com/gin-gonic/gin v1.12.0
 	github.com/joho/godotenv v1.5.1
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728

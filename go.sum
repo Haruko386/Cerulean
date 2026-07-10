@@ -1,5 +1,7 @@
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
+github.com/Haruko386/Celestial v0.0.0-20260628114458-d82cbffef886 h1:o9fH5b0Rn8cwO7sRxf2Gnop4y9DIyve8skHzYEdO2D4=
+github.com/Haruko386/Celestial v0.0.0-20260628114458-d82cbffef886/go.mod h1:Dv2Zzto5bivYyYxYOAVPNumTAG5amWkB6nh9M0J1zQg=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=
