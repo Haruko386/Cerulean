@@ -73,7 +73,22 @@ func (b *ElasticBackend) Name() string {
 
 // EnsureIndex Make sure index exists
 func (b *ElasticBackend) EnsureIndex(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, b.endpoint("/"+url.PathEscape(b.index)), nil)
+	if b == nil {
+		return fmt.Errorf("elastic backend is nil")
+	}
+	if b.client == nil {
+		return fmt.Errorf("elastic http client is nil")
+	}
+	if strings.TrimSpace(b.index) == "" {
+		return fmt.Errorf("elastic index is empty")
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodHead,
+		b.endpoint("/"+url.PathEscape(b.index)),
+		nil,
+	)
 	if err != nil {
 		return err
 	}
@@ -86,13 +101,22 @@ func (b *ElasticBackend) EnsureIndex(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// 200 表示 index 已经存在。
 		return nil
-	}
 
-	if resp.StatusCode != http.StatusNotFound {
+	case http.StatusNotFound:
+		// 404 表示 index 不存在，继续创建。
+
+	default:
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("check elastic index %q failed: status=%d body=%s", b.index, resp.StatusCode, string(body))
+		return fmt.Errorf(
+			"check elastic index %q failed: status=%d body=%s",
+			b.index,
+			resp.StatusCode,
+			string(body),
+		)
 	}
 
 	mapping := map[string]any{
@@ -124,10 +148,11 @@ func (b *ElasticBackend) EnsureIndex(ctx context.Context) error {
 		},
 	}
 
-	_, err = b.doJSON(ctx, http.MethodPut, b.endpoint("/"+url.PathEscape(b.index)), mapping)
+	_, err = b.doJSON(ctx, http.MethodPut, "/"+url.PathEscape(b.index), mapping)
 	if err != nil {
 		return fmt.Errorf("create elastic index %q: %w", b.index, err)
 	}
+
 	return nil
 }
 

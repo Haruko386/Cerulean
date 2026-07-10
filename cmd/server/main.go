@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/CeruleanFlow/cerulean/internal/dao"
+	"github.com/CeruleanFlow/cerulean/internal/queue"
 
 	"github.com/CeruleanFlow/cerulean/internal/api"
 	"github.com/CeruleanFlow/cerulean/internal/config"
@@ -35,8 +36,24 @@ func main() {
 	taskManager := task.NewMemoryManager()
 	documentParser := docparser.NewPDFTextParser()
 	searchBackend, err := buildSearchBackend(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	jobQueue, err := buildJobQueue(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if closer, ok := jobQueue.(interface{ Close() error }); ok {
+		defer func() {
+			if err := closer.Close(); err != nil {
+				log.Printf("job queue close error: %v\n", err)
+			}
+		}()
+	}
+
 	ragService := rag.NewService(paperRepo, searchBackend)
-	ingestService := ingest.NewService(paperRepo, chunkRepo, objectStore, taskManager, searchBackend, documentParser)
+	ingestService := ingest.NewService(paperRepo, chunkRepo, objectStore, taskManager, searchBackend, documentParser, jobQueue)
 
 	router := api.NewRouter(api.RouterOptions{
 		Config:        cfg,
@@ -111,5 +128,22 @@ func buildSearchBackend(cfg config.Config) (search.Backend, error) {
 
 	default:
 		return nil, fmt.Errorf("unsupported CERULEAN_SEARCH_DRIVER=%q; supported: local, elastic", cfg.SearchDriver)
+	}
+}
+
+func buildJobQueue(cfg config.Config) (queue.Queue, error) {
+	switch strings.ToLower(cfg.QueueDriver) {
+	case "", "redis":
+		return queue.NewRedisStreamQueue(context.Background(), queue.RedisStreamConfig{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+			Stream:   cfg.QueueStream,
+			Group:    cfg.QueueGroup,
+			Consumer: cfg.QueueConsumer,
+		})
+
+	default:
+		return nil, fmt.Errorf("unsupported CERULEAN_QUEUE_DRIVER=%q; supported: redis", cfg.QueueDriver)
 	}
 }

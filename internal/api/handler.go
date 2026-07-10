@@ -267,17 +267,12 @@ func (h *Handler) ReindexPaper(c *gin.Context) {
 		return
 	}
 
-	optCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	if err := h.ingest.ReindexPaper(optCtx, id); err != nil {
+	job, err := h.ingest.StartPaperIngest(c.Request.Context(), id)
+	if err != nil {
 		writeError(c, http.StatusInternalServerError, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"paper_id": id,
-		"status":   "reindexed",
-	})
+	c.JSON(http.StatusAccepted, job)
 }
 
 func (h *Handler) GetTask(c *gin.Context) {

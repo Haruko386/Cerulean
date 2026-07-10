@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/CeruleanFlow/cerulean/internal/domain"
+	"github.com/CeruleanFlow/cerulean/internal/queue"
 	"github.com/CeruleanFlow/cerulean/internal/repository"
 	"github.com/CeruleanFlow/cerulean/internal/search"
 	"github.com/CeruleanFlow/cerulean/internal/storage"
@@ -25,6 +26,8 @@ type Service struct {
 	search search.Backend
 	tasks  task.Manager
 	parser docparser.Parser
+
+	jobQueue queue.Queue
 }
 
 func NewService(
@@ -34,18 +37,28 @@ func NewService(
 	tasks task.Manager,
 	searchBackend search.Backend,
 	parser docparser.Parser,
+	jobQueue queue.Queue,
 ) *Service {
 	return &Service{
-		papers: papers,
-		chunks: chunks,
-		store:  store,
-		tasks:  tasks,
-		search: searchBackend,
-		parser: parser,
+		papers:   papers,
+		chunks:   chunks,
+		store:    store,
+		tasks:    tasks,
+		search:   searchBackend,
+		parser:   parser,
+		jobQueue: jobQueue,
 	}
 }
 
 func (s *Service) StartPaperIngest(ctx context.Context, paperID string) (task.Task, error) {
+	paperID = strings.TrimSpace(paperID)
+	if paperID == "" {
+		return task.Task{}, fmt.Errorf("paper id is empty")
+	}
+	if s.jobQueue == nil {
+		return task.Task{}, fmt.Errorf("job queue is empty")
+	}
+
 	paper, err := s.papers.Get(ctx, paperID)
 	if err != nil {
 		return task.Task{}, err
@@ -75,22 +88,68 @@ func (s *Service) StartPaperIngest(ctx context.Context, paperID string) (task.Ta
 		return task.Task{}, err
 	}
 
-	// Keep this asynchronous so the public API shape is already compatible with
-	// the future PaddleOCR worker and queue based pipeline.
-	go func(job task.Task, paper domain.Paper) {
-		defer func() {
-			if r := recover(); r != nil {
-				s.fail(context.Background(), job, paper, fmt.Errorf("panic during paper ingest: %v", r))
-			}
-		}()
+	redisJob := queue.Job{
+		ID:        job.ID,
+		TaskID:    job.ID,
+		Type:      queue.JobTypePaperIngest,
+		PaperID:   paper.ID,
+		Attempt:   0,
+		CreatedAt: now,
+	}
 
-		taskCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
+	if err := s.jobQueue.Enqueue(optCtx, redisJob); err != nil {
+		s.fail(context.Background(), job, paper, err)
+		return task.Task{}, fmt.Errorf("enqueue ingest job: %w", err)
+	}
 
-		if err := s.runPDFTextIngest(taskCtx, job, paper); err != nil {
-			s.fail(context.Background(), job, paper, err)
-		}
-	}(job, paper)
+	return job, nil
+}
+
+func (s *Service) StartPaperReindex(ctx context.Context, paperID string) (task.Task, error) {
+	paperID = strings.TrimSpace(paperID)
+	if paperID == "" {
+		return task.Task{}, fmt.Errorf("paper id is empty")
+	}
+	if s.jobQueue == nil {
+		return task.Task{}, fmt.Errorf("job queue is empty")
+	}
+
+	if _, err := s.papers.Get(ctx, paperID); err != nil {
+		return task.Task{}, fmt.Errorf("paper not found: %w", err)
+	}
+
+	optCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	now := time.Now()
+
+	job := task.Task{
+		ID:        fmt.Sprintf("task_%d", now.UnixNano()),
+		PaperID:   paperID,
+		Type:      queue.JobTypePaperReindex,
+		Status:    task.Queued,
+		Message:   "queued paper reindex",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := s.tasks.Create(optCtx, job); err != nil {
+		return task.Task{}, fmt.Errorf("create paper reindex: %w", err)
+	}
+
+	redisJob := queue.Job{
+		ID:        job.ID,
+		TaskID:    job.ID,
+		Type:      queue.JobTypePaperReindex,
+		PaperID:   paperID,
+		Attempt:   0,
+		CreatedAt: now,
+	}
+
+	if err := s.jobQueue.Enqueue(optCtx, redisJob); err != nil {
+		s.failTaskOnly(ctx, job, err)
+		return task.Task{}, fmt.Errorf("enqueue paper reindex: %w", err)
+	}
 	return job, nil
 }
 
@@ -177,6 +236,7 @@ func (s *Service) runPDFTextIngest(ctx context.Context, job task.Task, paper dom
 	return nil
 }
 
+// fail set failed status for paper and task
 func (s *Service) fail(ctx context.Context, job task.Task, paper domain.Paper, err error) {
 	opCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -191,6 +251,18 @@ func (s *Service) fail(ctx context.Context, job task.Task, paper domain.Paper, e
 	job.Status = task.Failed
 	job.Message = err.Error()
 	job.UpdatedAt = now
+	_ = s.tasks.Update(opCtx, job)
+}
+
+func (s *Service) failTaskOnly(ctx context.Context, job task.Task, err error) {
+	opCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	now := time.Now()
+	job.Status = task.Failed
+	job.Message = err.Error()
+	job.UpdatedAt = now
+
 	_ = s.tasks.Update(opCtx, job)
 }
 
@@ -280,5 +352,77 @@ func (s *Service) ReindexPaper(ctx context.Context, paperID string) error {
 		return fmt.Errorf("replace chunks by paperID: %w", err)
 	}
 
+	return nil
+}
+
+func (s *Service) ProcessPaperIngest(ctx context.Context, paperID, taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	paperID = strings.TrimSpace(paperID)
+
+	if paperID == "" {
+		return fmt.Errorf("paper id cannot be empty")
+	}
+	if taskID == "" {
+		return fmt.Errorf("task id cannot be empty")
+	}
+
+	job, ok := s.tasks.Get(ctx, taskID)
+	if !ok {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	paper, err := s.papers.Get(ctx, paperID)
+	if err != nil {
+		return fmt.Errorf("get paper %s from storage: %w", paperID, err)
+	}
+
+	if err := s.runPDFTextIngest(ctx, job, paper); err != nil {
+		s.fail(ctx, job, paper, err)
+		return err
+	}
+	return nil
+}
+
+func (s *Service) ProcessPaperReindex(ctx context.Context, paperID, taskID string) error {
+	taskID = strings.TrimSpace(taskID)
+	paperID = strings.TrimSpace(paperID)
+
+	if paperID == "" {
+		return fmt.Errorf("paper id cannot be empty")
+	}
+	if taskID == "" {
+		return fmt.Errorf("task id cannot be empty")
+	}
+
+	job, ok := s.tasks.Get(ctx, taskID)
+	if !ok {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+
+	now := time.Now()
+	job.Status = task.Running
+	job.Message = "reindexing paper chunks to Elasticsearch"
+	job.UpdatedAt = now
+
+	if err := s.tasks.Update(ctx, job); err != nil {
+		return fmt.Errorf("update job: %w", err)
+	}
+
+	if err := s.ReindexPaper(ctx, paperID); err != nil {
+		s.failTaskOnly(ctx, job, err)
+		return err
+	}
+
+	now = time.Now()
+	job.Status = task.Succeeded
+	job.Message = "reindexing paper chunks to Elasticsearch"
+	job.UpdatedAt = now
+
+	finishCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	if err := s.tasks.Update(finishCtx, job); err != nil {
+		return fmt.Errorf("update job: %w", err)
+	}
 	return nil
 }

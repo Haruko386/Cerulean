@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 
 	"github.com/joho/godotenv"
 	_ "github.com/joho/godotenv"
@@ -82,6 +83,18 @@ func Load() Config {
 
 		LLMBaseURL: env("CERULEAN_LLM_BASE_URL", ""),
 		LLMModel:   env("CERULEAN_LLM_MODEL", ""),
+
+		RedisAddr:     env("CERULEAN_REDIS_ADDR", "127.0.0.1:6379"),
+		RedisPassword: env("CERULEAN_REDIS_PASSWORD", ""),
+		RedisDB:       envInt("CERULEAN_REDIS_DB", 0),
+
+		QueueDriver:   env("CERULEAN_QUEUE_DRIVER", "redis"),
+		QueueStream:   env("CERULEAN_QUEUE_STREAM", "cerulean_tasks"),
+		QueueConsumer: env("CERULEAN_QUEUE_CONSUMER", "worker_local_1"),
+		QueueGroup:    env("CERULEAN_QUEUE_GROUP", "cerulean_workers"),
+
+		WorkerBatchSize:   envInt("CERULEAN_WORKER_BATCH_SIZE", 4),
+		WorkerConcurrency: envInt("CERULEAN_WORKER_CONCURRENCY", 16),
 	}
 }
 
@@ -90,4 +103,16 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	i, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return i
 }

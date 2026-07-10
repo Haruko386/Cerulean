@@ -149,13 +149,21 @@ func (q *RedisStreamQueue) DequeueBatch(ctx context.Context, max int, blockMilli
 }
 
 func (q *RedisStreamQueue) Ack(ctx context.Context, msg Message) error {
-	if msg.RedisID == "" {
+	if strings.TrimSpace(msg.RedisID) == "" {
 		return nil
 	}
 
-	return q.client.XAck(ctx, q.stream, msg.RedisID, msg.RedisID).Err()
+	return q.client.XAck(ctx, q.stream, q.group, msg.RedisID).Err()
 }
 
 func (q *RedisStreamQueue) Nack(ctx context.Context, msg Message, reason error) error {
 	return nil
+}
+
+// Close the redis
+func (q *RedisStreamQueue) Close() error {
+	if q.client == nil {
+		return nil
+	}
+	return q.client.Close()
 }
