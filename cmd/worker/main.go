@@ -89,19 +89,25 @@ func main() {
 		BlockMillis: 5000,
 		JobTimeout:  30 * time.Minute,
 		Concurrency: cfg.WorkerConcurrency,
+
+		ClaimInterval:  cfg.WorkerClaimInterval,
+		ClaimMinIdle:   cfg.WorkerClaimMinIdle,
+		ClaimBatchSize: cfg.WorkerClaimBatchSize,
 	})
 	if err != nil {
 		log.Fatalf("create executor worker: %v", err)
 	}
 
 	log.Printf(
-		"Cerulean worker started: redis=%s stream=%s group=%s consumer=%s batch_size=%d concurrency=%d",
+		"Cerulean worker started: redis=%s stream=%s group=%s consumer=%s batch_size=%d concurrency=%d job_timeout=%s claim_min_idle=%s",
 		cfg.RedisAddr,
 		cfg.QueueStream,
 		cfg.QueueGroup,
 		cfg.QueueConsumer,
 		cfg.WorkerBatchSize,
 		cfg.WorkerConcurrency,
+		cfg.WorkerJobTimeout,
+		cfg.WorkerClaimMinIdle,
 	)
 
 	if err := worker.Run(ctx); err != nil && ctx.Err() == nil {

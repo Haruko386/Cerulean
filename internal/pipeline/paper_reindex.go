@@ -19,6 +19,7 @@ func NewPaperReindexHandler(ingest *ingest.Service) *PaperReindexHandler {
 	}
 }
 
+// Handle processes a paper reindex job.
 func (h *PaperReindexHandler) Handle(ctx context.Context, job queue.Job) error {
 	if h.ingest == nil {
 		return fmt.Errorf("ingest service is nil")

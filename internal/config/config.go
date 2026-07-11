@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 	_ "github.com/joho/godotenv"
@@ -48,6 +49,11 @@ type Config struct {
 
 	WorkerConcurrency int
 	WorkerBatchSize   int
+
+	WorkerJobTimeout     time.Duration
+	WorkerClaimInterval  time.Duration
+	WorkerClaimMinIdle   time.Duration
+	WorkerClaimBatchSize int
 }
 
 func Load() Config {
@@ -95,6 +101,11 @@ func Load() Config {
 
 		WorkerBatchSize:   envInt("CERULEAN_WORKER_BATCH_SIZE", 4),
 		WorkerConcurrency: envInt("CERULEAN_WORKER_CONCURRENCY", 16),
+
+		WorkerJobTimeout:     envDuration("CERULEAN_WORKER_JOB_TIMEOUT", 30*time.Minute),
+		WorkerClaimInterval:  envDuration("CERULEAN_WORKER_CLAIM_INTERVAL", time.Minute),
+		WorkerClaimMinIdle:   envDuration("CERULEAN_WORKER_CLAIM_MIN_IDLE", 35*time.Minute),
+		WorkerClaimBatchSize: envInt("CERULEAN_WORKER_CLAIM_BATCH_SIZE", 16),
 	}
 }
 
@@ -115,4 +126,17 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	return i
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
 }

@@ -28,6 +28,7 @@ type RedisStreamQueue struct {
 	consumer string
 }
 
+// NewRedisStreamQueue creates and initializes a Redis Stream queue.
 func NewRedisStreamQueue(ctx context.Context, cfg RedisStreamConfig) (*RedisStreamQueue, error) {
 	// precheck
 	stream := strings.TrimSpace(cfg.Stream)
@@ -70,6 +71,7 @@ func NewRedisStreamQueue(ctx context.Context, cfg RedisStreamConfig) (*RedisStre
 	return q, nil
 }
 
+// ensureGroup ensures that the Redis Stream consumer group exists.
 func (q *RedisStreamQueue) ensureGroup(ctx context.Context) error {
 	err := q.client.XGroupCreateMkStream(ctx, q.stream, q.group, "0").Err()
 	if err == nil {
@@ -84,6 +86,7 @@ func (q *RedisStreamQueue) ensureGroup(ctx context.Context) error {
 
 }
 
+// Enqueue adds a job to the Redis Stream.
 func (q *RedisStreamQueue) Enqueue(ctx context.Context, job Job) error {
 	payload, err := json.Marshal(job)
 	if err != nil {
@@ -101,6 +104,7 @@ func (q *RedisStreamQueue) Enqueue(ctx context.Context, job Job) error {
 	}).Err()
 }
 
+// DequeueBatch reads a batch of new messages from the Redis Stream.
 func (q *RedisStreamQueue) DequeueBatch(ctx context.Context, max int, blockMillis int64) ([]Message, error) {
 	if max <= 0 {
 		max = 16
@@ -125,29 +129,59 @@ func (q *RedisStreamQueue) DequeueBatch(ctx context.Context, max int, blockMilli
 		return nil, fmt.Errorf("xreadgroup: %w", err)
 	}
 
-	messages := make([]Message, 0)
+	redisMessages := make([]redis.XMessage, 0)
 
 	for _, stream := range streams {
-		for _, redisMsg := range stream.Messages {
-			raw, ok := redisMsg.Values["payload"].(string)
-			if !ok {
-				continue
-			}
-
-			var job Job
-			if err := json.Unmarshal([]byte(raw), &job); err != nil {
-				continue
-			}
-
-			messages = append(messages, Message{
-				RedisID: redisMsg.ID,
-				Job:     job,
-			})
-		}
+		redisMessages = append(redisMessages, stream.Messages...)
 	}
-	return messages, nil
+	return decodeRedisMessages(redisMessages)
 }
 
+// ClaimPending claims idle pending messages for the current consumer.
+func (q *RedisStreamQueue) ClaimPending(ctx context.Context, start string, minIdle time.Duration, max int) ([]Message, string, error) {
+	if q == nil || q.client == nil {
+		return nil, start, fmt.Errorf("redis stream queue is not initialized")
+	}
+
+	if strings.TrimSpace(start) == "" {
+		start = "0-0"
+	}
+
+	if minIdle < 0 {
+		minIdle = 35 * time.Minute
+	}
+
+	if max <= 0 {
+		max = 16
+	}
+
+	redisMessages, nextStart, err := q.client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+		Stream:   q.stream,
+		Group:    q.group,
+		Consumer: q.consumer,
+		MinIdle:  minIdle,
+		Start:    start,
+		Count:    int64(max),
+	}).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, start, nil
+		}
+
+		return nil, start, fmt.Errorf("xautoclaim pending messages: %w", err)
+	}
+
+	messages, err := decodeRedisMessages(redisMessages)
+	if err != nil {
+		return nil, nextStart, fmt.Errorf("xautoclaim pending messages: %w", err)
+	}
+	if strings.TrimSpace(nextStart) == "" {
+		nextStart = "0-0"
+	}
+	return messages, nextStart, nil
+}
+
+// Ack acknowledges a successfully processed Redis message.
 func (q *RedisStreamQueue) Ack(ctx context.Context, msg Message) error {
 	if strings.TrimSpace(msg.RedisID) == "" {
 		return nil
@@ -156,14 +190,49 @@ func (q *RedisStreamQueue) Ack(ctx context.Context, msg Message) error {
 	return q.client.XAck(ctx, q.stream, q.group, msg.RedisID).Err()
 }
 
+// Nack handles a failed Redis message.
 func (q *RedisStreamQueue) Nack(ctx context.Context, msg Message, reason error) error {
 	return nil
 }
 
-// Close the redis
+// Close closes the Redis client connection.
 func (q *RedisStreamQueue) Close() error {
 	if q.client == nil {
 		return nil
 	}
 	return q.client.Close()
+}
+
+// decodeRedisMessages converts Redis messages into queue messages.
+func decodeRedisMessages(redisMessages []redis.XMessage) ([]Message, error) {
+	messages := make([]Message, 0, len(redisMessages))
+
+	for _, redisMsg := range redisMessages {
+		rawValue, ok := redisMsg.Values["payload"]
+		if !ok {
+			return nil, fmt.Errorf("redis stream message %s has no payload", redisMsg.ID)
+		}
+
+		var raw string
+
+		switch value := rawValue.(type) {
+		case string:
+			raw = value
+		case []byte:
+			raw = string(value)
+		default:
+			raw = fmt.Sprint(value)
+		}
+
+		var job Job
+		if err := json.Unmarshal([]byte(raw), &job); err != nil {
+			return nil, fmt.Errorf("decode redis message %s payload: %w", redisMsg.ID, err)
+		}
+
+		messages = append(messages, Message{
+			RedisID: redisMsg.ID,
+			Job:     job,
+		})
+	}
+	return messages, nil
 }

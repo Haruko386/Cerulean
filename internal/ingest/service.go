@@ -50,6 +50,7 @@ func NewService(
 	}
 }
 
+// StartPaperIngest creates and enqueues a paper ingestion task.
 func (s *Service) StartPaperIngest(ctx context.Context, paperID string) (task.Task, error) {
 	paperID = strings.TrimSpace(paperID)
 	if paperID == "" {
@@ -105,6 +106,7 @@ func (s *Service) StartPaperIngest(ctx context.Context, paperID string) (task.Ta
 	return job, nil
 }
 
+// StartPaperReindex creates and enqueues a paper reindex task.
 func (s *Service) StartPaperReindex(ctx context.Context, paperID string) (task.Task, error) {
 	paperID = strings.TrimSpace(paperID)
 	if paperID == "" {
@@ -153,6 +155,7 @@ func (s *Service) StartPaperReindex(ctx context.Context, paperID string) (task.T
 	return job, nil
 }
 
+// runPDFTextIngest parses a PDF and stores its generated artifacts and chunks.
 func (s *Service) runPDFTextIngest(ctx context.Context, job task.Task, paper domain.Paper) error {
 	// precheck
 	if s.parser == nil {
@@ -236,7 +239,7 @@ func (s *Service) runPDFTextIngest(ctx context.Context, job task.Task, paper dom
 	return nil
 }
 
-// fail set failed status for paper and task
+// fail marks both the paper and task as failed.
 func (s *Service) fail(ctx context.Context, job task.Task, paper domain.Paper, err error) {
 	opCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -254,6 +257,7 @@ func (s *Service) fail(ctx context.Context, job task.Task, paper domain.Paper, e
 	_ = s.tasks.Update(opCtx, job)
 }
 
+// failTaskOnly marks only the task as failed.
 func (s *Service) failTaskOnly(ctx context.Context, job task.Task, err error) {
 	opCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -266,7 +270,7 @@ func (s *Service) failTaskOnly(ctx context.Context, job task.Task, err error) {
 	_ = s.tasks.Update(opCtx, job)
 }
 
-// downloadOriginalPDF download original PDF to tmp
+// downloadOriginalPDF downloads the original PDF to a temporary local file.
 func (s *Service) downloadOriginalPDF(ctx context.Context, paper domain.Paper) (string, func(), error) {
 	if s.store == nil {
 		return "", nil, fmt.Errorf("object storage is not initialized")
@@ -323,6 +327,7 @@ func parsedMarkdown(paper domain.Paper, doc docparser.Document) string {
 	return b.String()
 }
 
+// ReindexPaper rebuilds a paper's Elasticsearch index from MySQL chunks.
 func (s *Service) ReindexPaper(ctx context.Context, paperID string) error {
 	if s.search == nil {
 		return fmt.Errorf("search backend is not initialized")
@@ -355,6 +360,7 @@ func (s *Service) ReindexPaper(ctx context.Context, paperID string) error {
 	return nil
 }
 
+// ProcessPaperIngest executes a queued paper ingestion task.
 func (s *Service) ProcessPaperIngest(ctx context.Context, paperID, taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	paperID = strings.TrimSpace(paperID)
@@ -370,6 +376,9 @@ func (s *Service) ProcessPaperIngest(ctx context.Context, paperID, taskID string
 	if !ok {
 		return fmt.Errorf("task %s not found", taskID)
 	}
+	if job.Status == task.Succeeded {
+		return nil
+	}
 
 	paper, err := s.papers.Get(ctx, paperID)
 	if err != nil {
@@ -383,6 +392,7 @@ func (s *Service) ProcessPaperIngest(ctx context.Context, paperID, taskID string
 	return nil
 }
 
+// ProcessPaperReindex executes a queued paper reindex task.
 func (s *Service) ProcessPaperReindex(ctx context.Context, paperID, taskID string) error {
 	taskID = strings.TrimSpace(taskID)
 	paperID = strings.TrimSpace(paperID)
@@ -397,6 +407,9 @@ func (s *Service) ProcessPaperReindex(ctx context.Context, paperID, taskID strin
 	job, ok := s.tasks.Get(ctx, taskID)
 	if !ok {
 		return fmt.Errorf("task %s not found", taskID)
+	}
+	if job.Status == task.Succeeded {
+		return nil
 	}
 
 	now := time.Now()

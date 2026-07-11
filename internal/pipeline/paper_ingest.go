@@ -19,6 +19,7 @@ func NewPaperIngestHandler(ingest *ingest.Service) *PaperIngestHandler {
 	}
 }
 
+// Handle processes a paper ingestion job.
 func (h *PaperIngestHandler) Handle(ctx context.Context, job queue.Job) error {
 	if h.ingest == nil {
 		return fmt.Errorf("ingest service is nil")

@@ -8,6 +8,7 @@ import (
 	"github.com/CeruleanFlow/cerulean/internal/domain"
 )
 
+// BuildChunks converts parsed document pages into searchable chunks.
 func BuildChunks(paper domain.Paper, artifactKey string, doc Document, maxRunes, overlap int) []domain.Chunk {
 	if maxRunes <= 0 {
 		maxRunes = 1200
@@ -56,7 +57,7 @@ func BuildChunks(paper domain.Paper, artifactKey string, doc Document, maxRunes,
 	return chunks
 }
 
-// splitTextByRunes split the text by runes
+// splitTextByRunes splits text into overlapping UTF-8-safe chunks.
 func splitTextByRunes(text string, maxRunes int, overlap int) []string {
 	runes := []rune(text)
 	if len(runes) == 0 {
@@ -90,6 +91,7 @@ func splitTextByRunes(text string, maxRunes int, overlap int) []string {
 	return result
 }
 
+// chooseChunkEnd selects a natural sentence boundary for a chunk.
 func chooseChunkEnd(runes []rune, start int, end int) int {
 	minEnd := start + int(float64(end-start)*0.7)
 

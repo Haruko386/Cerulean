@@ -18,6 +18,7 @@ func NewPDFTextParser() *PDFTextParser {
 	return &PDFTextParser{}
 }
 
+// ParseFile extracts page-level text from a PDF file.
 func (p *PDFTextParser) ParseFile(ctx context.Context, path string) (Document, error) {
 	f, reader, err := pdf.Open(path)
 	if err != nil {

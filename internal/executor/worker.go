@@ -3,7 +3,9 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	celestial "github.com/Haruko386/Celestial"
@@ -19,6 +21,11 @@ type Worker struct {
 	blockMillis int64
 	jobTimeout  time.Duration
 	concurrency int
+
+	claimInterval  time.Duration
+	claimMinIdle   time.Duration
+	claimBatchSize int
+	claimCursor    string
 }
 
 type WorkerOptions struct {
@@ -26,6 +33,10 @@ type WorkerOptions struct {
 	BlockMillis int64
 	JobTimeout  time.Duration
 	Concurrency int
+
+	ClaimInterval  time.Duration
+	ClaimMinIdle   time.Duration
+	ClaimBatchSize int
 }
 
 type JobResult struct {
@@ -35,6 +46,7 @@ type JobResult struct {
 	PaperID string
 }
 
+// NewWorker creates a configured task executor worker.
 func NewWorker(queue queue.Queue, registry *Registry, options WorkerOptions) (*Worker, error) {
 	if queue == nil {
 		return nil, errors.New("queue is nil")
@@ -63,29 +75,69 @@ func NewWorker(queue queue.Queue, registry *Registry, options WorkerOptions) (*W
 		concurrency = 4
 	}
 
+	claimInterval := options.ClaimInterval
+	if claimInterval == 0 {
+		claimInterval = time.Minute
+	}
+
+	claimMinIdle := options.ClaimMinIdle
+	if claimMinIdle == 0 {
+		claimMinIdle = jobTimeout + 5*time.Minute
+	}
+
+	claimBatchSize := options.ClaimBatchSize
+	if claimBatchSize == 0 {
+		claimBatchSize = batchSize
+	}
+
+	if claimMinIdle < jobTimeout {
+		return nil, errors.New("claim minimum time limit exceeded")
+	}
+
 	return &Worker{
-		queue:       queue,
-		registry:    *registry,
-		batchSize:   batchSize,
-		blockMillis: blockMillis,
-		jobTimeout:  jobTimeout,
-		concurrency: concurrency,
+		queue:          queue,
+		registry:       *registry,
+		batchSize:      batchSize,
+		blockMillis:    blockMillis,
+		jobTimeout:     jobTimeout,
+		concurrency:    concurrency,
+		claimInterval:  claimInterval,
+		claimMinIdle:   claimMinIdle,
+		claimBatchSize: claimBatchSize,
+		claimCursor:    "0-0",
 	}, nil
 }
 
+// Run starts the worker loop and processes queued jobs.
 func (w *Worker) Run(ctx context.Context) error {
 	log.Printf(
-		"executor worker started: batch_size=%d block_millis=%d job_timeout=%s",
+		"executor worker started: batch_size=%d concurrency=%d job_timeout=%s claim_interval=%s claim_min_idle=%s",
 		w.batchSize,
-		w.blockMillis,
+		w.concurrency,
 		w.jobTimeout,
+		w.claimInterval,
+		w.claimMinIdle,
 	)
+
+	lastClaimAt := time.Now()
 
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("executor worker stopping")
 			return ctx.Err()
 		default:
+		}
+
+		if lastClaimAt.IsZero() || time.Since(lastClaimAt) >= w.claimInterval {
+			if err := w.recoverPending(ctx); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+
+				log.Printf("recover pending jobs failed: %v", err)
+			}
+			lastClaimAt = time.Now()
 		}
 
 		messages, err := w.queue.DequeueBatch(ctx, w.batchSize, w.blockMillis)
@@ -109,6 +161,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
+// handleBatch processes a batch of messages concurrently.
 func (w *Worker) handleBatch(ctx context.Context, messages []queue.Message) error {
 	if len(messages) == 0 {
 		return nil
@@ -165,6 +218,7 @@ func (w *Worker) handleBatch(ctx context.Context, messages []queue.Message) erro
 	return nil
 }
 
+// handleMessage executes and acknowledges a single queue message.
 func (w *Worker) handleMessage(ctx context.Context, msg queue.Message) (JobResult, error) {
 	result := JobResult{
 		RedisID: msg.RedisID,
@@ -221,4 +275,33 @@ func (w *Worker) handleMessage(ctx context.Context, msg queue.Message) (JobResul
 		msg.Job.Type,
 	)
 	return result, nil
+}
+
+// recoverPending claims and processes idle pending messages.
+func (w *Worker) recoverPending(ctx context.Context) error {
+	messages, nextStart, err := w.queue.ClaimPending(ctx, w.claimCursor, w.claimMinIdle, w.claimBatchSize)
+	if err != nil {
+		return err
+	}
+
+	w.claimCursor = nextStart
+	if strings.TrimSpace(nextStart) == "" {
+		w.claimCursor = "0-0"
+	}
+
+	if len(messages) == 0 {
+		return nil
+	}
+
+	log.Printf(
+		"claimed pending jobs: count=%d next_start=%s min_idle=%s",
+		len(messages),
+		w.claimCursor,
+		w.claimMinIdle,
+	)
+
+	if err := w.handleBatch(ctx, messages); err != nil {
+		return fmt.Errorf("handle claimed pending batch: %w", err)
+	}
+	return nil
 }
